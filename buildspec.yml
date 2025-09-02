@@ -5,12 +5,44 @@ phases:
     runtime-versions:
       python: 3.9
     commands:
+      - echo "Installing dependencies..."
       - pip install -r requirements.txt
-      - pip install sagemaker boto3 torch scikit-learn pandas
+      
+  pre_build:
+    commands:
+      - echo "Running tests..."
+      - mkdir -p data
+      - python src/prepare_data.py
+      - aws s3 cp data/breast_cancer.csv s3://${S3_BUCKET}/data/
+      
   build:
     commands:
       - echo "Starting SageMaker Training Job..."
-      - python src/train_estimator.py
+      - python src/train_estimator.py --mode sagemaker --bucket ${S3_BUCKET}
+      
+  post_build:
+    commands:
+      - echo "Deploying model to SageMaker endpoint..."
+      - python src/deploy_model.py --model-name ${ENDPOINT_NAME}
+      - echo "Testing endpoint..."
+      - python src/test_endpoint.py --endpoint-name ${ENDPOINT_NAME} --samples 3
+      - echo "Updating Lambda function..."
+      - aws lambda update-function-code --function-name ${LAMBDA_FUNCTION_NAME} --zip-file fileb://lambda/lambda_function.zip
+      
 artifacts:
   files:
     - '**/*'
+  
+cache:
+  paths:
+    - '/root/.cache/pip/**/*'
+
+env:
+  variables:
+    S3_BUCKET: cancer-prediction-data-arash
+    ENDPOINT_NAME: cancer-prediction-model
+    LAMBDA_FUNCTION_NAME: cancer-prediction-lambda
+  
+  parameter-store:
+    # S3_BUCKET: /myproject/s3-bucket
+    # ENDPOINT_NAME: /myproject/endpoint-name

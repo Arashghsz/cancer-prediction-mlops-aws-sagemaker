@@ -1,21 +1,60 @@
 import json
 import boto3
-
-runtime = boto3.client('sagemaker-runtime')
-ENDPOINT_NAME = "cancer-prediction-endpoint"
+import os
 
 def lambda_handler(event, context):
-    features = event["features"]
-    payload = ",".join([str(x) for x in features])
-
-    response = runtime.invoke_endpoint(
-        EndpointName=ENDPOINT_NAME,
-        ContentType="text/csv",
-        Body=payload
-    )
-
-    result = response['Body'].read().decode('utf-8')
-    return {
-        "statusCode": 200,
-        "body": json.dumps({"prediction": float(result)})
-    }
+    """
+    Lambda function to invoke a SageMaker endpoint for cancer prediction
+    """
+    # Get the endpoint name from environment variable or use default
+    endpoint_name = os.environ.get('ENDPOINT_NAME', 'cancer-prediction-model')
+    
+    try:
+        # Parse the input
+        if 'body' in event:
+            body = json.loads(event['body'])
+        else:
+            body = event
+            
+        features = body.get('features', [])
+        
+        if not features:
+            return {
+                'statusCode': 400,
+                'body': json.dumps({'error': 'No features provided'})
+            }
+            
+        # Prepare the payload
+        payload = {
+            'features': features
+        }
+        
+        # Create SageMaker runtime client
+        runtime = boto3.client('sagemaker-runtime')
+        
+        # Invoke endpoint
+        response = runtime.invoke_endpoint(
+            EndpointName=endpoint_name,
+            ContentType='application/json',
+            Body=json.dumps(payload)
+        )
+        
+        # Parse response
+        result = json.loads(response['Body'].read().decode())
+        
+        # Return prediction
+        return {
+            'statusCode': 200,
+            'headers': {
+                'Content-Type': 'application/json',
+                'Access-Control-Allow-Origin': '*'
+            },
+            'body': json.dumps(result)
+        }
+        
+    except Exception as e:
+        print(f"Error: {str(e)}")
+        return {
+            'statusCode': 500,
+            'body': json.dumps({'error': str(e)})
+        }
