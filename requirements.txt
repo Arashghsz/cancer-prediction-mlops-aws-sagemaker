@@ -1,0 +1,6 @@
+torch
+scikit-learn
+pandas
+boto3
+sagemaker
+numpy
