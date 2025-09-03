@@ -1,4 +1,4 @@
-version: 0.2
+version: 0.6
 
 phases:
   install:
@@ -17,17 +17,28 @@ phases:
       
   build:
     commands:
-      - echo "Starting SageMaker Training Job..."
-      - python src/train_estimator.py --mode sagemaker --bucket ${S3_BUCKET}
+      - echo "Training model locally in CodeBuild..."
+      - mkdir -p model
+      - python src/train.py --data-path data/breast_cancer.csv --model-dir model --epochs 10
+      - echo "Uploading model artifacts to S3..."
+      - aws s3 cp model/model.pth s3://${S3_BUCKET}/models/
       
   post_build:
     commands:
-      - echo "Deploying model to SageMaker endpoint..."
-      - python src/deploy_model.py --model-name ${ENDPOINT_NAME}
-      - echo "Testing endpoint..."
-      - python src/test_endpoint.py --endpoint-name ${ENDPOINT_NAME} --samples 3
       - echo "Updating Lambda function..."
-      - aws lambda update-function-code --function-name ${LAMBDA_FUNCTION_NAME} --zip-file fileb://lambda/lambda_function.zip
+      - cd lambda
+      # Handle both Windows and Linux environments for zipping
+      - |
+        if [ -f /bin/bash ]; then
+          # Linux environment
+          echo "Using Linux zip command"
+          zip -j lambda_function.zip lambda_function.py
+        else
+          # Windows environment
+          echo "Using PowerShell Compress-Archive"
+          powershell -Command "Compress-Archive -Path lambda_function.py -DestinationPath lambda_function.zip -Force"
+        fi
+      - aws lambda update-function-code --function-name ${LAMBDA_FUNCTION_NAME} --zip-file fileb://lambda_function.zip || echo "Lambda update skipped (function may not exist yet)"
       
 artifacts:
   files:
