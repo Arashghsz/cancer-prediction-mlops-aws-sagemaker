@@ -1,60 +1,53 @@
+import os
 import json
 import boto3
-import os
+
+runtime = boto3.client("sagemaker-runtime")
+ENDPOINT_NAME = os.environ.get("ENDPOINT_NAME")  # e.g. "cancer-prediction-skl-1756892108"
 
 def lambda_handler(event, context):
-    """
-    Lambda function to invoke a SageMaker endpoint for cancer prediction
-    """
-    # Get the endpoint name from environment variable or use default
-    endpoint_name = os.environ.get('ENDPOINT_NAME', 'cancer-prediction-model')
-    
     try:
-        # Parse the input
-        if 'body' in event:
-            body = json.loads(event['body'])
+        # parse body (API Gateway proxy or direct invocation)
+        if isinstance(event, dict) and "body" in event and event["body"]:
+            body = json.loads(event["body"])
         else:
-            body = event
-            
-        features = body.get('features', [])
-        
-        if not features:
-            return {
-                'statusCode': 400,
-                'body': json.dumps({'error': 'No features provided'})
-            }
-            
-        # Prepare the payload
-        payload = {
-            'features': features
-        }
-        
-        # Create SageMaker runtime client
-        runtime = boto3.client('sagemaker-runtime')
-        
-        # Invoke endpoint
-        response = runtime.invoke_endpoint(
-            EndpointName=endpoint_name,
-            ContentType='application/json',
+            body = event if isinstance(event, dict) else json.loads(event)
+
+        # accept either {"features":[...]} or {"instances":[[...], ...]} or raw list
+        instances = None
+        if isinstance(body, dict):
+            instances = body.get("instances") or body.get("features") or body.get("data")
+        else:
+            instances = body
+
+        if instances is None:
+            return {"statusCode": 400, "body": json.dumps({"error": "No features provided"})}
+
+        # normalize to list of instances
+        if isinstance(instances, list) and len(instances) > 0 and not isinstance(instances[0], list):
+            payload_instances = [instances]
+        else:
+            payload_instances = instances
+
+        payload = {"instances": payload_instances}
+
+        resp = runtime.invoke_endpoint(
+            EndpointName=ENDPOINT_NAME,
+            ContentType="application/json",
             Body=json.dumps(payload)
         )
-        
-        # Parse response
-        result = json.loads(response['Body'].read().decode())
-        
-        # Return prediction
+
+        resp_body = resp["Body"].read().decode()
+        parsed = json.loads(resp_body)
+
         return {
-            'statusCode': 200,
-            'headers': {
-                'Content-Type': 'application/json',
-                'Access-Control-Allow-Origin': '*'
+            "statusCode": 200,
+            "headers": {
+                "Content-Type": "application/json",
+                "Access-Control-Allow-Origin": "*"
             },
-            'body': json.dumps(result)
+            "body": json.dumps({"endpoint_response": parsed})
         }
-        
+
     except Exception as e:
-        print(f"Error: {str(e)}")
-        return {
-            'statusCode': 500,
-            'body': json.dumps({'error': str(e)})
-        }
+        return {"statusCode": 500, "body": json.dumps({"error": str(e)})}
